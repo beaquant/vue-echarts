@@ -1,3 +1,21 @@
+3.1.2
+* Fix the problem that `setOption` is always called with `notMerge: true`.
+
+3.1.1
+* Fix the problem that `options` are not watched as expected.
+
+3.1.0
+* Add `manual-update` prop to handle performance critical scenarios.
+* Deprecate `watch-shallow` prop as it was actually not working as expected.
+* Fix the computed getters by using `Object.defineProperties` directly instead of Vue's `computed` as it no longer works as expected after Vue 2.0.
+* Remove `chart` from `data` to gain a performance boost.
+
+3.0.9
+* Update to `resize-detector@0.1.7` to better handle initial resize callback.
+
+3.0.8
+* Add new events and API to adapt the latest version of ECharts.
+
 3.0.7
 * Only apply optimization introduce in last version for charts resize from `0` area.
 

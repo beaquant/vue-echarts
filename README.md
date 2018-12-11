@@ -34,15 +34,34 @@ import ECharts from 'vue-echarts/components/ECharts'
 import 'echarts/lib/chart/bar'
 import 'echarts/lib/component/tooltip'
 
+// If you want to use ECharts extensions, just import the extension package and it will work
+// Taking ECharts-GL as an example:
+// You only need to install the package with `npm install --save echarts-gl` and import it as follows
+import 'echarts-gl'
+
 // register component to use
-Vue.component('chart', ECharts)
+Vue.component('v-chart', ECharts)
 ```
 
 #### ⚠️ Heads up
 
-##### Importing the souce version
+##### Importing the source version
 
-If you are using vue-cli to create your project and you want to use the untranspiled component (import `vue-echarts/components/ECharts` rather than import vue-echarts directly, to optimize bundle size, which is recommended), Vue's webpack template may exclude `node_modules` from files to be transpiled by Babel. To fix this problem, try change `build/webpack.base.conf.js` like this:
+If you are using official Vue CLI to create your project and you want to use the untranspiled component (import `vue-echarts/components/ECharts` rather than import `vue-echarts` directly, to optimize bundle size, which is recommended), you'll encounter the problem that the default configuration will exclude `node_modules` from files to be transpiled by Babel.
+
+For **Vue CLI 3+**, add `vue-echarts` and `resize-detector` into `transpileDependencies` in `vue.config.js` like this:
+
+```js
+// vue.config.js
+module.exports = {
+  transpileDependencies: [
+    /\/node_modules\/vue-echarts\//,
+    /\/node_modules\/resize-detector\//
+  ]
+}
+```
+
+For **Vue CLI 2** with the `webpack` template, modify `build/webpack.base.conf.js` like this:
 
 ```diff
       {
@@ -59,6 +78,34 @@ If you are using vue-cli to create your project and you want to use the untransp
 ```
 
 If you are using bare webpack config, just do similar modifications make it work.
+
+#### Using with Nuxt.js
+
+When using Vue-ECharts on the server side with Nuxt.js, it may be not properly transpiled because Nuxt.js has configured an `external` option by default, which prevent files under `node_modules` from being bundled into the server bundle with only a few exceptions. We need to add `vue-echarts` into the `whitelist` as follows:
+
+```js
+// Don't forget to
+// npm i --save-dev webpack-node-externals
+const nodeExternals = require('webpack-node-externals')
+
+module.exports = {
+  // ...
+  build: {
+    extend (config, { isServer }) {
+      // ...
+      if (isServer) {
+        config.externals = [
+          nodeExternals({
+            // default value for `whitelist` is
+            // [/es6-promise|\.(?!(?:js|json)$).{1,5}$/i]
+            whitelist: [/es6-promise|\.(?!(?:js|json)$).{1,5}$/i, /^vue-echarts/]
+          })
+        ]
+      }
+    }
+  }
+}
+```
 
 ### CommonJS with npm
 
@@ -89,7 +136,7 @@ require.config({
 
 require(['vue', 'vue-echarts'], function (Vue, ECharts) {
   // register component to use...
-  Vue.component('chart', ECharts)
+  Vue.component('v-chart', ECharts)
 })
 ```
 
@@ -99,24 +146,32 @@ The component is exposed as `window.VueECharts`.
 
 ```js
 // register component to use
-Vue.component('chart', VueECharts)
+Vue.component('v-chart', VueECharts)
 ```
 
 ## Using the component
 
 ```vue
 <template>
-<chart :options="polar"></chart>
+<v-chart :options="polar"/>
 </template>
 
 <style>
 .echarts {
-  height: 300px;
+  width: 100%;
+  height: 100%;
 }
 </style>
 
 <script>
+import ECharts from 'vue-echarts/components/ECharts'
+import 'echarts/lib/chart/line'
+import 'echarts/lib/component/polar'
+
 export default {
+  components: {
+    'v-chart': ECharts
+  },
   data: function () {
     let data = []
 
@@ -183,6 +238,21 @@ See more examples [here](https://github.com/Justineo/vue-echarts/tree/master/dem
 
   Used to update data for ECharts instance. Modifying this prop will trigger ECharts' `setOption` method.
 
+  If you mutate the data bound to `options` while retaining the object reference, `setOption` will be called with `notMerge: false`. Otherwise, if you bind a new object to `options`, `setOption` will be called with `notMerge: true`.
+
+  For example, if we have the following template:
+
+  ```html
+  <v-chart :options="data"/>
+  ```
+
+  Then:
+
+  ```
+  this.data = newObject // setOption(this.options, true)
+  this.data.title.text = 'Trends' // setOption(this.options, false)
+  ```
+
 * `group`
 
   This prop is automatically bound to the same prop of the ECharts instance.
@@ -191,9 +261,9 @@ See more examples [here](https://github.com/Justineo/vue-echarts/tree/master/dem
 
   This prop indicates ECharts instance should be resized automatically whenever its root is resized.
 
-* `watchShallow` (default: `false`)
+* `manual-update` (default: `false`)
 
-  This prop is used to turn off the default deep watch for `options` prop. For charts with large amount of data, you may need to set this prop so that Vue only watches the `options` prop itself instead of watching all its properties inside. To trigger the rerender of the chart, you have to change the root reference to `options` prop itself, or you can manually manage data via the `mergeOptions` method (chart data won't be synchronized with `options` prop when doing this).
+  For performance critical scenarios (having a large dataset) we'd better bypass Vue's reactivity system for `options` prop. By specifying `manual-update` prop with `true` and not providing `options` prop, the dataset won't be watched any more. After doing so, you need to retrieve the component instance with `ref` and manually call `mergeOptions` method to update the chart.
 
 ### Computed
 
@@ -234,6 +304,8 @@ See more examples [here](https://github.com/Justineo/vue-echarts/tree/master/dem
 * `disconnect`
 * `registerMap`
 * `registerTheme`
+* `graphic.clipPointsByRect`
+* `graphic.clipRectByRect`
 
 ### Events
 
@@ -242,6 +314,7 @@ Vue-ECharts support the following events:
 * `legendselectchanged`
 * `legendselected`
 * `legendunselected`
+* `legendunscroll`
 * `datazoom`
 * `datarangeselected`
 * `timelinechanged`
@@ -263,14 +336,18 @@ Vue-ECharts support the following events:
 * `unfocusnodeadjacency`
 * `brush`
 * `brushselected`
+* `rendered`
+* `finished`
 * Mouse events
   * `click`
   * `dblclick`
   * `mouseover`
   * `mouseout`
+  * `mousemove`
   * `mousedown`
   * `mouseup`
   * `globalout`
+  * `contextmenu`
 
 For further details, see [ECharts' API documentation](https://ecomfe.github.io/echarts-doc/public/en/api.html).
 

@@ -13,13 +13,13 @@
 import echarts from 'echarts/lib/echarts'
 import debounce from 'lodash/debounce'
 import { addListener, removeListener } from 'resize-detector'
-import Vue from 'vue'
 
 // enumerating ECharts events for now
 const EVENTS = [
   'legendselectchanged',
   'legendselected',
   'legendunselected',
+  'legendunscroll',
   'datazoom',
   'datarangeselected',
   'timelinechanged',
@@ -41,13 +41,17 @@ const EVENTS = [
   'unfocusnodeadjacency',
   'brush',
   'brushselected',
+  'rendered',
+  'finished',
   'click',
   'dblclick',
   'mouseover',
   'mouseout',
+  'mousemove',
   'mousedown',
   'mouseup',
-  'globalout'
+  'globalout',
+  'contextmenu'
 ]
 
 export default {
@@ -57,41 +61,12 @@ export default {
     initOptions: Object,
     group: String,
     autoResize: Boolean,
-    watchShallow: Boolean
+    watchShallow: Boolean,
+    manualUpdate: Boolean
   },
   data () {
     return {
-      chart: null,
       lastArea: 0
-    }
-  },
-  computed: {
-    // Only recalculated when accessed from JavaScript.
-    // Won't update DOM on value change because getters
-    // don't depend on reactive values
-    width: {
-      cache: false,
-      get () {
-        return this.delegateGet('width', 'getWidth')
-      }
-    },
-    height: {
-      cache: false,
-      get () {
-        return this.delegateGet('height', 'getHeight')
-      }
-    },
-    isDisposed: {
-      cache: false,
-      get () {
-        return !!this.delegateGet('isDisposed', 'isDisposed')
-      }
-    },
-    computedOptions: {
-      cache: false,
-      get () {
-        return this.delegateGet('computedOptions', 'getOption')
-      }
     }
   },
   watch: {
@@ -102,7 +77,15 @@ export default {
   methods: {
     // provide a explicit merge option method
     mergeOptions (options, notMerge, lazyUpdate) {
-      this.delegateMethod('setOption', options, notMerge, lazyUpdate)
+      if (this.manualUpdate) {
+        this.manualOptions = options
+      }
+
+      if (!this.chart) {
+        this.init()
+      } else {
+        this.delegateMethod('setOption', options, notMerge, lazyUpdate)
+      }
     },
     // just delegates ECharts methods to Vue component
     // use explicit params to reduce transpiled size for now
@@ -144,14 +127,13 @@ export default {
     },
     delegateMethod (name, ...args) {
       if (!this.chart) {
-        Vue.util.warn(`Cannot call [${name}] before the chart is initialized. Set prop [options] first.`, this)
-        return
+        this.init()
       }
       return this.chart[name](...args)
     },
     delegateGet (name, method) {
       if (!this.chart) {
-        Vue.util.warn(`Cannot get [${name}] before the chart is initialized. Set prop [options] first.`, this)
+        this.init()
       }
       return this.chart[method]()
     },
@@ -169,7 +151,7 @@ export default {
         chart.group = this.group
       }
 
-      chart.setOption(this.options, true)
+      chart.setOption(this.manualOptions || this.options || {}, true)
 
       // expose ECharts events as custom events
       EVENTS.forEach(event => {
@@ -185,7 +167,7 @@ export default {
             // emulate initial render for initially hidden charts
             this.mergeOptions({}, true)
             this.resize()
-            this.mergeOptions(this.options, true)
+            this.mergeOptions(this.options || this.manualOptions || {}, true)
           } else {
             this.resize()
           }
@@ -193,6 +175,36 @@ export default {
         }, 100, { leading: true })
         addListener(this.$el, this.__resizeHandler)
       }
+
+      Object.defineProperties(this, {
+        // Only recalculated when accessed from JavaScript.
+        // Won't update DOM on value change because getters
+        // don't depend on reactive values
+        width: {
+          configurable: true,
+          get: () => {
+            return this.delegateGet('width', 'getWidth')
+          }
+        },
+        height: {
+          configurable: true,
+          get: () => {
+            return this.delegateGet('height', 'getHeight')
+          }
+        },
+        isDisposed: {
+          configurable: true,
+          get: () => {
+            return !!this.delegateGet('isDisposed', 'isDisposed')
+          }
+        },
+        computedOptions: {
+          configurable: true,
+          get: () => {
+            return this.delegateGet('computedOptions', 'getOption')
+          }
+        }
+      })
 
       this.chart = chart
     },
@@ -204,20 +216,31 @@ export default {
       this.chart = null
     },
     refresh () {
-      this.destroy()
-      this.init()
+      if (this.chart) {
+        this.destroy()
+        this.init()
+      }
     }
   },
   created () {
-    this.$watch('options', options => {
-      if (!this.chart && options) {
-        this.init()
-      } else {
-        this.chart.setOption(this.options, true)
-      }
-    }, { deep: !this.watchShallow })
+    if (!this.manualUpdate) {
+      this.$watch('options', (val, oldVal) => {
+        if (!this.chart && val) {
+          this.init()
+        } else {
+          // mutating `options` will lead to merging
+          // replacing it with new reference will lead to not merging
+          // eg.
+          // `this.options = Object.assign({}, this.options, { ... })`
+          // will trigger `this.chart.setOption(val, true)
+          // `this.options.title.text = 'Trends'`
+          // will trigger `this.chart.setOption(val, false)`
+          this.chart.setOption(val, val !== oldVal)
+        }
+      }, { deep: !this.watchShallow })
+    }
 
-    let watched = ['theme', 'initOptions', 'autoResize', 'watchShallow']
+    let watched = ['theme', 'initOptions', 'autoResize', 'manualUpdate', 'watchShallow']
     watched.forEach(prop => {
       this.$watch(prop, () => {
         this.refresh()
